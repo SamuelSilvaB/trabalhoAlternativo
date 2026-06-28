@@ -1,0 +1,406 @@
+import glfw
+from OpenGL.GL import *
+import numpy as np
+import ctypes
+import math
+import glm
+
+from pecas import *
+from utils import lerp, carregar_textura
+from renderizacao import build_grid, gerar_vertices_auras
+from geometria import carregar_modelo_base, preparar_modelo_renderizavel
+
+class Tabuleiro:
+    def __init__(self):
+        vertices = build_grid()
+        self.qtdVertices = len(vertices) // 8
+
+        self.casas = [[None for _ in range(8)] for _ in range(8)]
+        self.pecas = []
+
+        # Jogador 1
+        self.adicionar_peca(Tanque(0, 6, 6))
+        self.adicionar_peca(Atirador(0, 3, 7))
+        self.adicionar_peca(Batedor(0, 1, 5))
+
+        # jogador 2
+        self.adicionar_peca(Tanque(1, 0, 0))
+        self.adicionar_peca(Atirador(1, 3, 2))
+        self.adicionar_peca(Batedor(1, 7, 0))
+
+        self.peca_selecionada = None
+        self.modo_ataque = False
+
+        self.textura_piso = carregar_textura("woodfloor2.jpg")
+
+        print("Carregando os modelos 3D...")
+        self.modelos = {
+            "Tanque": carregar_modelo_base("modelos/Soldier_tank/Soldier_tank_otimizado.obj", escala=0.15),
+            "Atirador": carregar_modelo_base("modelos/Soldier_atirador/Soldier_atirador_otimizado.obj", escala=0.15),
+            "Batedor": carregar_modelo_base("modelos/Soldier_batedor/Soldier_batedor_otimizado.obj", escala=0.15),
+        }
+
+        # Configurar VAO/VBO para o grid (estático)
+        self.vaoId = glGenVertexArrays(1)
+        glBindVertexArray(self.vaoId)
+
+        self.vboId = glGenBuffers(1)
+        glBindBuffer(GL_ARRAY_BUFFER, self.vboId)
+        glBufferData(GL_ARRAY_BUFFER, vertices.nbytes, vertices, GL_STATIC_DRAW)
+
+        stride = 8 * 4
+        glEnableVertexAttribArray(0) # Posiçao 0
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride, ctypes.c_void_p(0))
+        glEnableVertexAttribArray(1) # Cor 1
+        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, stride, ctypes.c_void_p(12))
+        glEnableVertexAttribArray(2) # Textura UV 2
+        glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, stride, ctypes.c_void_p(24))
+
+        glBindVertexArray(0)
+
+        # ------------------------------------------------------------------
+        # VBOs ESTÁTICOS DOS MODELOS (uma vez só, na origem, sem transformação)
+        # Uma combinação (tipo, cor) = um buffer próprio. A posição/rotação
+        # de cada peça no tabuleiro é aplicada depois, na GPU, via modelMatrix.
+        # ------------------------------------------------------------------
+        self.vaos_modelos = {}
+        for peca in self.pecas:
+            chave = (peca.tipo, tuple(peca.cor))
+            if chave in self.vaos_modelos:
+                continue
+
+            dados = preparar_modelo_renderizavel(self.modelos[peca.tipo], peca.cor)
+            qtd_vertices = len(dados) // 8
+
+            vao = glGenVertexArrays(1)
+            vbo = glGenBuffers(1)
+            glBindVertexArray(vao)
+            glBindBuffer(GL_ARRAY_BUFFER, vbo)
+            glBufferData(GL_ARRAY_BUFFER, dados.nbytes, dados, GL_STATIC_DRAW)
+
+            glEnableVertexAttribArray(0)
+            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride, ctypes.c_void_p(0))
+            glEnableVertexAttribArray(1)
+            glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, stride, ctypes.c_void_p(12))
+            glEnableVertexAttribArray(2)
+            glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, stride, ctypes.c_void_p(24))
+
+            glBindVertexArray(0)
+
+            self.vaos_modelos[chave] = (vao, vbo, qtd_vertices)
+
+        # ------------------------------------------------------------------
+        # VAO/VBO PERSISTENTE PARA AS AURAS (reaproveitado todo frame,
+        # em vez de criar/destruir glGenVertexArrays/glGenBuffers em loop)
+        # ------------------------------------------------------------------
+        self.vao_auras = glGenVertexArrays(1)
+        self.vbo_auras = glGenBuffers(1)
+        glBindVertexArray(self.vao_auras)
+        glBindBuffer(GL_ARRAY_BUFFER, self.vbo_auras)
+        # aloca um buffer inicial vazio; o tamanho real é definido a cada frame
+        glBufferData(GL_ARRAY_BUFFER, 0, None, GL_DYNAMIC_DRAW)
+
+        stride_aura = 6 * 4
+        glEnableVertexAttribArray(0)
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride_aura, ctypes.c_void_p(0))
+        glEnableVertexAttribArray(1)
+        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, stride_aura, ctypes.c_void_p(12))
+        glBindVertexArray(0)
+
+    def adicionar_peca(self, peca):
+        self.pecas.append(peca)
+        self.casas[peca.linha][peca.coluna] = peca
+
+    def obter_peca(self, linha, coluna):
+        for peca in self.pecas:
+            if peca.linha == linha and peca.coluna == coluna:
+                return peca
+        return None
+
+    def mover_peca(self, peca, linha, coluna):
+        if peca.movido:
+            print("Esta peça já se moveu neste turno!")
+            return False
+        if linha < 0 or linha > 7 or coluna < 0 or coluna > 7:
+            return False
+        if self.obter_peca(linha, coluna) is not None:
+            return False
+
+        distancia = abs(linha - peca.linha) + abs(coluna - peca.coluna)
+        if distancia > peca.movimento:
+            print(f"Movimento muito longo ({distancia}) máximo = {peca.movimento}")
+            return False
+
+        peca.x_inicial = peca.x_visual
+        peca.z_inicial = peca.z_visual
+        peca.x_destino = coluna - 4
+        peca.z_destino = linha - 4
+        peca.tempo_animacao = 0.0
+        peca.animando = True
+        peca.linha = linha
+        peca.coluna = coluna
+        peca.movido = True
+        return True
+
+    def casas_atacaveis(self, peca):
+        casas = []
+        alcance = peca.alcance_do_ataque
+        for linha in range(8):
+            for coluna in range(8):
+                distancia = abs(linha - peca.linha) + abs(coluna - peca.coluna)
+                if 0 < distancia <= alcance:
+                    casas.append((linha, coluna))
+        return casas
+
+    def atualizar_animacoes(self, dt):
+
+        pecas_para_remover = []
+
+        for peca in self.pecas:
+
+            # -------------------
+            # Movimento
+            # -------------------
+            if peca.animando:
+
+                peca.tempo_animacao += dt
+
+                t = peca.tempo_animacao / peca.duracao_animacao
+                t = min(t, 1.0)
+
+                t = t * t * (3 - 2 * t)
+
+                if t >= 1.0:
+                    t = 1.0
+                    peca.animando = False
+
+                peca.x_visual = lerp(
+                    peca.x_inicial,
+                    peca.x_destino,
+                    t
+                )
+
+                peca.z_visual = lerp(
+                    peca.z_inicial,
+                    peca.z_destino,
+                    t
+                )
+
+                if peca.animando:
+                    peca.y_visual = (
+                        math.sin(t * math.pi)
+                        * 0.5
+                    )
+                else:
+                    peca.y_visual = 0.0
+
+            # -------------------
+            # Dano
+            # -------------------
+            if peca.recebendo_dano:
+
+                peca.tempo_dano += dt
+
+                if peca.tempo_dano >= peca.duracao_dano:
+
+                    peca.recebendo_dano = False
+
+                    peca.offset_dano_x = 0.0
+                    peca.offset_dano_z = 0.0
+
+                    if peca.morta:
+                        pecas_para_remover.append(peca)
+
+                else:
+
+                    intensidade = 0.08
+
+                    if int(peca.tempo_dano * 50) % 2 == 0:
+                        peca.offset_dano_x = intensidade
+                    else:
+                        peca.offset_dano_x = -intensidade
+
+                    peca.offset_dano_z = 0.0
+
+        # -------------------
+        # Remove peças mortas
+        # -------------------
+        for peca in pecas_para_remover:
+
+            if peca in self.pecas:
+
+                self.casas[
+                    peca.linha
+                ][
+                    peca.coluna
+                ] = None
+
+                self.pecas.remove(peca)
+
+                print(f"{peca.tipo} removida do jogo")
+
+    def atacar(self, atacante, linha, coluna):
+
+        alvo = self.obter_peca(
+            linha,
+            coluna
+        )
+
+        if atacante.atacou:
+            print(
+                "Esta peça já atacou neste turno!"
+            )
+            return False
+
+        if alvo is None:
+            return False
+
+        if alvo.morta:
+            return False
+
+        if alvo.jogador == atacante.jogador:
+            return False
+
+        distancia = (
+            abs(linha - atacante.linha)
+            +
+            abs(coluna - atacante.coluna)
+        )
+
+        if distancia == 0:
+            return False
+
+        if distancia > atacante.alcance_do_ataque:
+            return False
+
+        alvo.vida -= atacante.dano
+
+        print(
+            f"{alvo.tipo} recebeu "
+            f"{atacante.dano} de dano"
+        )
+
+        print(
+            f"Vida restante: "
+            f"{alvo.vida}"
+        )
+
+        alvo.recebendo_dano = True
+        alvo.tempo_dano = 0.0
+
+        if alvo.vida <= 0:
+
+            alvo.morta = True
+
+            print(
+                f"{alvo.tipo} será destruído"
+            )
+
+        print(
+            f"{atacante.tipo} atacou "
+            f"{alvo.tipo}"
+        )
+
+        atacante.atacou = True
+
+        return True
+
+    def remover_peca(self, peca):
+        self.pecas.remove(peca)
+        self.casas[peca.linha][peca.coluna] = None
+
+    def casas_alcancaveis(self, peca):
+        casas = []
+        for linha in range(8):
+            for coluna in range(8):
+                distancia = abs(linha - peca.linha) + abs(coluna - peca.coluna)
+                if distancia <= peca.movimento and self.obter_peca(linha, coluna) is None:
+                    casas.append((linha, coluna))
+        return casas
+
+    def iniciar_turno(self, jogador):
+        for peca in self.pecas:
+            if peca.jogador == jogador:
+                peca.movido = False
+                peca.atacou = False
+        print(f"Turno do jogador {jogador} começou!")
+
+    def tem_alvos_validos(self, peca):
+        """Retorna True se a peça tem pelo menos um inimigo ao alcance de ataque."""
+        for linha in range(8):
+            for coluna in range(8):
+                alvo = self.obter_peca(linha, coluna)
+                if alvo and alvo.jogador != peca.jogador:
+                    distancia = abs(linha - peca.linha) + abs(coluna - peca.coluna)
+                    if distancia <= peca.alcance_do_ataque:
+                        return True
+        return False
+
+    def turno_acabou(self, jogador):
+        """Retorna True se todas as peças do jogador já moveram E atacaram."""
+        for peca in self.pecas:
+            if peca.jogador == jogador and (not peca.movido or not peca.atacou):
+                return False
+        return True
+
+    def render(self, shaderId, locations, projMatrix, viewMatrix):
+        # --------------------------------------------------------------
+        # Grid (estático) - desenhado com modelMatrix = identidade,
+        # que é exatamente o que já está configurado em main.render()
+        # antes de chamar tabuleiro.render().
+        # --------------------------------------------------------------
+        glActiveTexture(GL_TEXTURE0)
+        glBindTexture(GL_TEXTURE_2D, self.textura_piso)
+
+        glBindVertexArray(self.vaoId)
+        glDrawArrays(GL_TRIANGLES, 0, self.qtdVertices)
+        glBindVertexArray(0)
+
+        glBindTexture(GL_TEXTURE_2D, 0)
+
+        # --------------------------------------------------------------
+        # Peças: SEM gerar vértices em CPU. Cada peça usa um VBO estático
+        # (na origem) e só recebe uma matriz de modelo (translação+rotação)
+        # calculada na CPU (custo irrisório: uma matriz 4x4 por peça) e
+        # aplicada pela GPU no vertex shader.
+        # --------------------------------------------------------------
+        for peca in self.pecas:
+            x = peca.x_visual + peca.offset_dano_x
+            z = peca.z_visual + peca.offset_dano_z
+            angulo = math.radians(90) if peca.jogador == 0 else math.radians(-90)
+
+            modelMatrix = glm.translate(glm.mat4(1.0), glm.vec3(x + 0.5, 0.9 + peca.y_visual, z + 0.5))
+            modelMatrix = glm.rotate(modelMatrix, -angulo, glm.vec3(0, 1, 0))
+            mvp = projMatrix * viewMatrix * modelMatrix
+
+            glUniformMatrix4fv(locations['uMVP'], 1, GL_FALSE, glm.value_ptr(mvp))
+            glUniformMatrix4fv(locations['modelMatrix'], 1, GL_FALSE, glm.value_ptr(modelMatrix))
+
+            chave = (peca.tipo, tuple(peca.cor))
+            vao, vbo, qtd_vertices = self.vaos_modelos[chave]
+            glBindVertexArray(vao)
+            glDrawArrays(GL_TRIANGLES, 0, qtd_vertices)
+
+        glBindVertexArray(0)
+
+        # --------------------------------------------------------------
+        # Restaura a matriz de modelo para identidade antes de desenhar
+        # as auras, já que os vértices delas vêm em coordenadas absolutas
+        # do mundo (calculados em add_aura).
+        # --------------------------------------------------------------
+        modelIdentity = glm.mat4(1.0)
+        mvpIdentity = projMatrix * viewMatrix * modelIdentity
+        glUniformMatrix4fv(locations['uMVP'], 1, GL_FALSE, glm.value_ptr(mvpIdentity))
+        glUniformMatrix4fv(locations['modelMatrix'], 1, GL_FALSE, glm.value_ptr(modelIdentity))
+
+        # --------------------------------------------------------------
+        # Auras (dinâmico, mas reaproveitando sempre o mesmo VAO/VBO -
+        # nada de glGenVertexArrays/glGenBuffers/glDeleteBuffers em loop)
+        # --------------------------------------------------------------
+        vertices = gerar_vertices_auras(self)
+        glBindVertexArray(self.vao_auras)
+        glBindBuffer(GL_ARRAY_BUFFER, self.vbo_auras)
+        if len(vertices) > 0:
+            glBufferData(GL_ARRAY_BUFFER, vertices.nbytes, vertices, GL_DYNAMIC_DRAW)
+            glDrawArrays(GL_TRIANGLES, 0, len(vertices) // 6)
+        glBindVertexArray(0)
