@@ -24,8 +24,8 @@ class Tabuleiro:
         self.adicionar_peca(Batedor(0, 1, 5))
 
         # jogador 2
-        self.adicionar_peca(Tanque(1, 0, 0))
-        self.adicionar_peca(Atirador(1, 3, 2))
+        self.adicionar_peca(Batedor(1, 0, 0))
+        self.adicionar_peca(Batedor(1, 3, 2))
         self.adicionar_peca(Batedor(1, 7, 0))
 
         self.peca_selecionada = None

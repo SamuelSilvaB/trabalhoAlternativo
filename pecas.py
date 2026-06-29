@@ -83,9 +83,9 @@ class Atirador(Peca):
         super().__init__(jogador, linha, coluna)
         self.tipo = "Atirador"
         self.vida = 2
-        self.dano = 3
-        self.movimento = 3
-        self.alcance_do_ataque = 3
+        self.dano = 2
+        self.movimento = 1
+        self.alcance_do_ataque = 2
 
 class Batedor(Peca):
 
@@ -93,9 +93,9 @@ class Batedor(Peca):
 
         super().__init__(jogador, linha, coluna)
         self.tipo = "Batedor"
-        self.vida = 4
+        self.vida = 3
         self.dano = 2
-        self.movimento = 2
+        self.movimento = 1
         self.alcance_do_ataque = 1
 
         # Só o Batedor do time vermelho (defensor) pode construir barricadas
