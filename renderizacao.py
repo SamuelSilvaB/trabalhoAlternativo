@@ -31,7 +31,7 @@ def build_grid():
         5.0,
         -0.4,
         -0.5,           # profundidade
-        (0.5, 0.5, 0.5) # cor
+        (0.1, 0.1, 0.1) # cor
     )
 
     return np.array(data, dtype=np.float32)

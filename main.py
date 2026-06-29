@@ -25,6 +25,7 @@ target_elev = elev
 
 turno = 0
 peca_selecionada = None
+peca_bloqueada = False 
 
 projMatrix = None
 viewMatrix = None
@@ -170,9 +171,14 @@ def keyboard(window, key, scancode, action, mods):
             tabuleiro.modo_construcao = not tabuleiro.modo_construcao
             tabuleiro.modo_ataque = False
             print("Modo construção:", tabuleiro.modo_construcao)
+    elif key == glfw.KEY_ENTER:
+        if peca_selecionada is not None and peca_selecionada.movido and not peca_selecionada.atacou:
+            print("Jogador passou o ataque.")
+            finalizar_turno()
 
 def finalizar_turno():
-    global turno, peca_selecionada
+    global turno, peca_selecionada, peca_bloqueada
+    peca_bloqueada = False
     turno += 1
     tabuleiro.iniciar_turno(turno % 2)
     peca_selecionada = None
@@ -182,10 +188,9 @@ def finalizar_turno():
     print(f"--- Turno {turno} - Jogador {turno % 2} ---")
 
 def mouseClick(window, button, action, mods):
-    global peca_selecionada, turno
+    global peca_selecionada, turno, peca_bloqueada
     if button != glfw.MOUSE_BUTTON_LEFT or action != glfw.PRESS:
         return
-
     if tabuleiro.jogo_terminado:
         return
 
@@ -194,77 +199,74 @@ def mouseClick(window, button, action, mods):
     if casa is None:
         return
     linha, coluna = casa
-    print(f"Clicou em ({linha}, {coluna})")
 
-    # caso que já existe uma peça selecionada
     if peca_selecionada is not None:
-        # Clicou na mesma peça, cancela seleção
+        # Cancela seleção clicando na mesma peça (só se não bloqueada)
         if peca_selecionada.linha == linha and peca_selecionada.coluna == coluna:
-            peca_selecionada = None
-            tabuleiro.peca_selecionada = None
-            tabuleiro.modo_ataque = False
-            tabuleiro.modo_construcao = False
-            print("Seleção cancelada")
+            if not peca_bloqueada:
+                peca_selecionada = None
+                tabuleiro.peca_selecionada = None
+                tabuleiro.modo_ataque = False
+                tabuleiro.modo_construcao = False
+                print("Seleção cancelada")
             return
 
-        # Se a peça já moveu e ainda não atacou, ativa o modo ataque
-        if peca_selecionada.movido and not peca_selecionada.atacou:
-            tabuleiro.modo_ataque = True
+        # Troca de peça — só permitido antes de mover
+        if not peca_bloqueada:
+            peca_clicada = tabuleiro.obter_peca(linha, coluna)
+            if peca_clicada is not None and peca_clicada.jogador == turno % 2 and not peca_clicada.e_obstaculo:
+                peca_selecionada = peca_clicada
+                tabuleiro.peca_selecionada = peca_clicada
+                tabuleiro.modo_ataque = False
+                tabuleiro.modo_construcao = False
+                print(f"Trocou seleção para ({linha}, {coluna})")
+                return
 
-        # --- Tentativa de CONSTRUÇÃO DE BARRICADA ---
+        # --- CONSTRUÇÃO ---
         if tabuleiro.modo_construcao:
             if tabuleiro.construir_barricada(peca_selecionada, linha, coluna):
                 print("Barricada construída!")
+                peca_bloqueada = False
                 finalizar_turno()
             else:
-                print("Não foi possível construir a barricada aqui.")
+                print("Não foi possível construir aqui.")
             return
 
-        # --- Tentativa de ATAQUE ---
+        # --- ATAQUE ---
         if tabuleiro.modo_ataque:
             if tabuleiro.atacar(peca_selecionada, linha, coluna):
                 print("Ataque realizado!")
+                peca_bloqueada = False
                 finalizar_turno()
             else:
-                print("Ataque inválido (fora do alcance ou alvo inválido).")
+                print("Ataque inválido.")
             return
 
-        if not peca_selecionada.movido:
-            if tabuleiro.mover_peca(peca_selecionada, linha, coluna):
-                print("Movimento realizado!")
-                # Após mover, verifica se há alvos válidos para atacar
-                if tabuleiro.tem_alvos_validos(peca_selecionada):
-                    # Coloca automaticamente em modo ataque
-                    tabuleiro.modo_ataque = True
-                    print("Agora você pode atacar com esta peça!")
-                else:
-                    # Sem alvos o turno termina após movimento
-                    print("Nenhum inimigo ao alcance. Turno encerrado.")
-                    finalizar_turno()
+        # --- MOVIMENTO ---
+        if tabuleiro.mover_peca(peca_selecionada, linha, coluna):
+            print("Movimento realizado!")
+            peca_bloqueada = True  # trava: não pode mais trocar de peça
+            tabuleiro.modo_ataque = True
+            if tabuleiro.tem_alvos_validos(peca_selecionada):
+                tabuleiro.modo_ataque = True
+                print("Ataque (Enter para passar)!")
             else:
-                print("Movimento inválido (casa ocupada ou distância muito longa).")
+                print("Nenhum inimigo ao alcance. Pressione Enter para passar.")
         else:
-            print("Esta peça já se moveu neste turno. Use modo ataque (Espaço) para atacar.")
+            print("Movimento inválido.")
         return
 
+    # Nenhuma peça selecionada
     peca = tabuleiro.obter_peca(linha, coluna)
-    if peca is not None and peca.jogador == turno % 2 and not peca.e_obstaculo:
-        if peca.atacou:
-            print("Esta peça já atacou neste turno!")
-        elif peca.movido:
-            # Peça já moveu, mas ainda não atacou. Seleciona e ativa modo ataque.
-            peca_selecionada = peca
-            tabuleiro.peca_selecionada = peca
-            tabuleiro.modo_ataque = True
-            print(f"Peça selecionada (já moveu) - modo ataque automático")
-        else:
-            # Peça não moveu nem atacou
-            peca_selecionada = peca
-            tabuleiro.peca_selecionada = peca
-            tabuleiro.modo_ataque = False
-            print(f"Peça selecionada em ({linha}, {coluna}) - modo movimento")
+    if peca is not None and peca.jogador == turno % 2 and not peca.e_obstaculo and not peca.atacou:
+        peca_selecionada = peca
+        tabuleiro.peca_selecionada = peca
+        peca_bloqueada = False
+        tabuleiro.modo_ataque = peca.movido
+        tabuleiro.modo_construcao = False
+        print(f"Peça selecionada em ({linha}, {coluna})")
     else:
-        print("Nenhuma peça sua nesta casa ou peça já finalizou ações.")
+        print("Nenhuma peça válida aqui.")
 
 def main():
     glfw.init()
