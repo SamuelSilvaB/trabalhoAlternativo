@@ -48,10 +48,42 @@ class Tabuleiro:
         self.textura_piso = carregar_textura("woodfloor2.jpg")
 
         print("Carregando os modelos 3D...")
+        # self.modelos = {
+        #     "Tanque": carregar_modelo_base("modelos/Soldier_tank/Soldier_tank_otimizado.obj", escala=0.15),
+        #     "Atirador": carregar_modelo_base("modelos/Soldier_atirador/Soldier_atirador_otimizado.obj", escala=0.15),
+        #     "Batedor": carregar_modelo_base("modelos/Soldier_batedor/Soldier_batedor_otimizado.obj", escala=0.15),
+        # }
+
         self.modelos = {
-            "Tanque": carregar_modelo_base("modelos/Soldier_tank/Soldier_tank_otimizado.obj", escala=0.15),
-            "Atirador": carregar_modelo_base("modelos/Soldier_atirador/Soldier_atirador_otimizado.obj", escala=0.15),
-            "Batedor": carregar_modelo_base("modelos/Soldier_batedor/Soldier_batedor_otimizado.obj", escala=0.15),
+            0: {   # jogador vermelho
+                "Tanque": carregar_modelo_base(
+                    "modelos/Soldier_tank/Soldier_tank_otimizado.obj",
+                    escala=0.15
+                ),
+                "Atirador": carregar_modelo_base(
+                    "modelos/Soldier_atirador/Soldier_atirador_otimizado.obj",
+                    escala=0.15
+                ),
+                "Batedor": carregar_modelo_base(
+                    "modelos/Soldier_batedor/Soldier_batedor_otimizado.obj",
+                    escala=0.15
+                ),
+            },
+
+            1: {   # jogador azul
+                "Tanque": carregar_modelo_base(
+                    "modelos/Robot/robo_otimizado.obj",
+                    escala=0.05
+                ),
+                "Atirador": carregar_modelo_base(
+                    "modelos/Robot/robo_otimizado.obj",
+                    escala=0.05
+                ),
+                "Batedor": carregar_modelo_base(
+                    "modelos/Robot/robo_otimizado.obj",
+                    escala=0.05
+                ),
+            }
         }
 
         # Configurar VAO/VBO para o grid (estático)
@@ -343,14 +375,17 @@ class Tabuleiro:
         já foi feito antes; para peças criadas durante o jogo (barricadas),
         criamos aqui, uma única vez por combinação (tipo, cor).
         """
-        chave = (peca.tipo, tuple(peca.cor))
+        chave = (peca.jogador, peca.tipo)
         if chave in self.vaos_modelos:
             return
 
         if peca.tipo == "Barricada":
             dados = preparar_barricada_renderizavel(0.8, peca.cor)
         else:
-            dados = preparar_modelo_renderizavel(self.modelos[peca.tipo], peca.cor)
+            dados = preparar_modelo_renderizavel(
+                self.modelos[peca.jogador][peca.tipo],
+                peca.cor
+            )
 
         qtd_vertices = len(dados) // 8
 
@@ -476,7 +511,7 @@ class Tabuleiro:
             glUniformMatrix4fv(locations['uMVP'], 1, GL_FALSE, glm.value_ptr(mvp))
             glUniformMatrix4fv(locations['modelMatrix'], 1, GL_FALSE, glm.value_ptr(modelMatrix))
 
-            chave = (peca.tipo, tuple(peca.cor))
+            chave = (peca.jogador, peca.tipo)
             vao, vbo, qtd_vertices = self.vaos_modelos[chave]
             glBindVertexArray(vao)
             glDrawArrays(GL_TRIANGLES, 0, qtd_vertices)

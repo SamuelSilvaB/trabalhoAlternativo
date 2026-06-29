@@ -61,7 +61,7 @@ class Peca:
 
         # Cor por jogador
         if jogador == 0:
-            self.cor = (1.0, 0.2, 0.2)
+            self.cor = (0.33, 0.42, 0.18)
         else:
             self.cor = (0.2, 0.4, 1.0)
 
