@@ -74,7 +74,7 @@ def init():
     locations['modelMatrix'] = glGetUniformLocation(shaderId, 'modelMatrix')
     locations['uMVP'] = glGetUniformLocation(shaderId, 'uMVP')
 
-    # NOVAS LOCATIONS PARA A LUZ
+    # LOCATIONS PARA A LUZ
     locations['lightPos'] = glGetUniformLocation(shaderId, 'lightPos')
     locations['lightDir'] = glGetUniformLocation(shaderId, 'lightDir')
     locations['cutOff'] = glGetUniformLocation(shaderId, 'cutOff')
@@ -104,18 +104,17 @@ def render():
 
     # ENVIA MATRIZ DIRETAMENTE
     mvp = projMatrix * viewMatrix * modelMatrix
-    glUniformMatrix4fv(glGetUniformLocation(shaderId, 'uMVP'), 1, GL_FALSE, glm.value_ptr(mvp))
-    glUniformMatrix4fv(glGetUniformLocation(shaderId, 'modelMatrix'), 1, GL_FALSE, glm.value_ptr(modelMatrix))
+    glUniformMatrix4fv(locations['uMVP'], 1, GL_FALSE, glm.value_ptr(mvp))
+    glUniformMatrix4fv(locations['modelMatrix'], 1, GL_FALSE, glm.value_ptr(modelMatrix))
 
     # LIGAR A LUZ
-    glUniform3f(glGetUniformLocation(shaderId, 'lightPos'), 0.0, 8.0, 0.0) 
-    glUniform3f(glGetUniformLocation(shaderId, 'lightDir'), 0.0, -1.0, 0.0) 
-    glUniform1f(glGetUniformLocation(shaderId, 'cutOff'), math.cos(math.radians(35.0)))
-    glUniform1f(glGetUniformLocation(shaderId, 'outerCutOff'), math.cos(math.radians(45.0)))
-    glUniform3f(glGetUniformLocation(shaderId, 'ambientLight'), 0.3, 0.3, 0.3)
-    # glUniform3f(glGetUniformLocation(shaderId, 'ambientLight'), 1.0, 1.0, 1.0)
+    glUniform3f(locations['lightPos'], 0.0, 8.0, 0.0)
+    glUniform3f(locations['lightDir'], 0.0, -1.0, 0.0)
+    glUniform1f(locations['cutOff'], math.cos(math.radians(35.0)))
+    glUniform1f(locations['outerCutOff'], math.cos(math.radians(45.0)))
+    glUniform3f(locations['ambientLight'], 0.3, 0.3, 0.3)
     glUniform3f(glGetUniformLocation(shaderId, 'lightColor'), 1.0, 1.0, 1.0)
-    
+
     tabuleiro.render(shaderId, locations, projMatrix, viewMatrix)
     glUseProgram(0)
 
@@ -127,6 +126,13 @@ def update(window):
     dt = agora - ultimo_tempo
     ultimo_tempo = agora
     tabuleiro.atualizar_animacoes(dt)
+
+    if tabuleiro.jogo_terminado:
+        if tabuleiro.vencedor == tabuleiro.JOGADOR_AZUL:
+            texto = "Time Azul venceu!"
+        else:
+            texto = "Time Vermelho venceu!"
+        glfw.set_window_title(window, f"ToySoldiers - {texto}")
 
 def updateFrameBuffer(window, width, height):
     global resolution, viewport
@@ -141,7 +147,12 @@ def keyboard(window, key, scancode, action, mods):
 
     if key == glfw.KEY_ESCAPE:
         glfw.set_window_should_close(window, True)
-    elif key == glfw.KEY_RIGHT:
+        return
+
+    if tabuleiro.jogo_terminado:
+        return
+
+    if key == glfw.KEY_RIGHT:
         target_angle -= math.pi
     elif key == glfw.KEY_LEFT:
         target_angle += math.pi
@@ -152,7 +163,13 @@ def keyboard(window, key, scancode, action, mods):
     elif key == glfw.KEY_SPACE:
         if peca_selecionada is not None:
             tabuleiro.modo_ataque = not tabuleiro.modo_ataque
+            tabuleiro.modo_construcao = False
             print("Modo ataque:", tabuleiro.modo_ataque)
+    elif key == glfw.KEY_B:
+        if peca_selecionada is not None and peca_selecionada.pode_construir_barricada:
+            tabuleiro.modo_construcao = not tabuleiro.modo_construcao
+            tabuleiro.modo_ataque = False
+            print("Modo construção:", tabuleiro.modo_construcao)
 
 def finalizar_turno():
     global turno, peca_selecionada
@@ -161,11 +178,15 @@ def finalizar_turno():
     peca_selecionada = None
     tabuleiro.peca_selecionada = None
     tabuleiro.modo_ataque = False
+    tabuleiro.modo_construcao = False
     print(f"--- Turno {turno} - Jogador {turno % 2} ---")
 
 def mouseClick(window, button, action, mods):
     global peca_selecionada, turno
     if button != glfw.MOUSE_BUTTON_LEFT or action != glfw.PRESS:
+        return
+
+    if tabuleiro.jogo_terminado:
         return
 
     x, y = glfw.get_cursor_pos(window)
@@ -182,12 +203,22 @@ def mouseClick(window, button, action, mods):
             peca_selecionada = None
             tabuleiro.peca_selecionada = None
             tabuleiro.modo_ataque = False
+            tabuleiro.modo_construcao = False
             print("Seleção cancelada")
             return
 
         # Se a peça já moveu e ainda não atacou, ativa o modo ataque
         if peca_selecionada.movido and not peca_selecionada.atacou:
             tabuleiro.modo_ataque = True
+
+        # --- Tentativa de CONSTRUÇÃO DE BARRICADA ---
+        if tabuleiro.modo_construcao:
+            if tabuleiro.construir_barricada(peca_selecionada, linha, coluna):
+                print("Barricada construída!")
+                finalizar_turno()
+            else:
+                print("Não foi possível construir a barricada aqui.")
+            return
 
         # --- Tentativa de ATAQUE ---
         if tabuleiro.modo_ataque:
@@ -217,7 +248,7 @@ def mouseClick(window, button, action, mods):
         return
 
     peca = tabuleiro.obter_peca(linha, coluna)
-    if peca is not None and peca.jogador == turno % 2:
+    if peca is not None and peca.jogador == turno % 2 and not peca.e_obstaculo:
         if peca.atacou:
             print("Esta peça já atacou neste turno!")
         elif peca.movido:

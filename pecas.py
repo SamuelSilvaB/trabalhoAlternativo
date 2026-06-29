@@ -50,6 +50,15 @@ class Peca:
         self.offset_dano_x = 0.0
         self.offset_dano_z = 0.0
 
+        # Construção de barricadas (só algumas peças do time 0 podem)
+        self.pode_construir_barricada = False
+        self.alcance_de_construcao = 0
+
+        # Marca se esta "peça" é, na verdade, um obstáculo (ex: barricada).
+        # Obstáculos bloqueiam movimento mas não contam para a condição
+        # de vitória por eliminação de peças.
+        self.e_obstaculo = False
+
         # Cor por jogador
         if jogador == 0:
             self.cor = (1.0, 0.2, 0.2)
@@ -88,3 +97,26 @@ class Batedor(Peca):
         self.dano = 2
         self.movimento = 2
         self.alcance_do_ataque = 1
+
+        # Só o Batedor do time vermelho (defensor) pode construir barricadas
+        if jogador == 0:
+            self.pode_construir_barricada = True
+            self.alcance_de_construcao = 1
+
+class Barricada(Peca):
+    """
+    Obstáculo construído pelo Batedor do time vermelho.
+    Não se move, não ataca, só ocupa uma casa (bloqueando movimento) e
+    pode ser destruída por ataques normais, como qualquer outra peça.
+    """
+
+    def __init__(self, jogador, linha, coluna):
+        super().__init__(jogador, linha, coluna)
+        self.tipo = "Barricada"
+        self.vida = 3
+        self.dano = 0
+        self.movimento = 0
+        self.alcance_do_ataque = 0
+        self.e_obstaculo = True
+
+        self.cor = (0.45, 0.32, 0.18)

@@ -8,7 +8,7 @@ import glm
 from pecas import *
 from utils import lerp, carregar_textura
 from renderizacao import build_grid, gerar_vertices_auras
-from geometria import carregar_modelo_base, preparar_modelo_renderizavel
+from geometria import carregar_modelo_base, preparar_modelo_renderizavel, preparar_barricada_renderizavel
 
 class Tabuleiro:
     def __init__(self):
@@ -30,6 +30,20 @@ class Tabuleiro:
 
         self.peca_selecionada = None
         self.modo_ataque = False
+        self.modo_construcao = False
+
+        # ------------------------------------------------------------------
+        # Condição de vitória: time vermelho (jogador 0) defende a base,
+        # que fica na coluna 7 (lado direito do tabuleiro). O time azul
+        # (jogador 1) vence se alguma peça sua alcançar a coluna 7.
+        # Qualquer time vence também se o time adversário perder todas as peças.
+        # ------------------------------------------------------------------
+        self.JOGADOR_VERMELHO = 0
+        self.JOGADOR_AZUL = 1
+        self.COLUNA_OBJETIVO = 7
+
+        self.jogo_terminado = False
+        self.vencedor = None
 
         self.textura_piso = carregar_textura("woodfloor2.jpg")
 
@@ -65,29 +79,7 @@ class Tabuleiro:
         # ------------------------------------------------------------------
         self.vaos_modelos = {}
         for peca in self.pecas:
-            chave = (peca.tipo, tuple(peca.cor))
-            if chave in self.vaos_modelos:
-                continue
-
-            dados = preparar_modelo_renderizavel(self.modelos[peca.tipo], peca.cor)
-            qtd_vertices = len(dados) // 8
-
-            vao = glGenVertexArrays(1)
-            vbo = glGenBuffers(1)
-            glBindVertexArray(vao)
-            glBindBuffer(GL_ARRAY_BUFFER, vbo)
-            glBufferData(GL_ARRAY_BUFFER, dados.nbytes, dados, GL_STATIC_DRAW)
-
-            glEnableVertexAttribArray(0)
-            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride, ctypes.c_void_p(0))
-            glEnableVertexAttribArray(1)
-            glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, stride, ctypes.c_void_p(12))
-            glEnableVertexAttribArray(2)
-            glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, stride, ctypes.c_void_p(24))
-
-            glBindVertexArray(0)
-
-            self.vaos_modelos[chave] = (vao, vbo, qtd_vertices)
+            self._garantir_vao_estatico(peca)
 
         # ------------------------------------------------------------------
         # VAO/VBO PERSISTENTE PARA AS AURAS (reaproveitado todo frame,
@@ -140,6 +132,8 @@ class Tabuleiro:
         peca.linha = linha
         peca.coluna = coluna
         peca.movido = True
+
+        self.verificar_fim_de_jogo()
         return True
 
     def casas_atacaveis(self, peca):
@@ -239,6 +233,9 @@ class Tabuleiro:
 
                 print(f"{peca.tipo} removida do jogo")
 
+        if pecas_para_remover:
+            self.verificar_fim_de_jogo()
+
     def atacar(self, atacante, linha, coluna):
 
         alvo = self.obter_peca(
@@ -309,6 +306,72 @@ class Tabuleiro:
         self.pecas.remove(peca)
         self.casas[peca.linha][peca.coluna] = None
 
+    def construir_barricada(self, construtor, linha, coluna):
+        """Tenta construir uma barricada na casa indicada, usando a ação do turno do construtor."""
+        if not construtor.pode_construir_barricada:
+            print(f"{construtor.tipo} não sabe construir barricadas!")
+            return False
+
+        if construtor.atacou:
+            print("Esta peça já realizou sua ação neste turno!")
+            return False
+
+        if linha < 0 or linha > 7 or coluna < 0 or coluna > 7:
+            return False
+
+        if self.obter_peca(linha, coluna) is not None:
+            print("Já existe algo nessa casa.")
+            return False
+
+        distancia = abs(linha - construtor.linha) + abs(coluna - construtor.coluna)
+        if distancia == 0 or distancia > construtor.alcance_de_construcao:
+            print(f"Muito longe para construir (máximo = {construtor.alcance_de_construcao}).")
+            return False
+
+        barricada = Barricada(construtor.jogador, linha, coluna)
+        self._garantir_vao_estatico(barricada)
+        self.adicionar_peca(barricada)
+
+        construtor.atacou = True
+        print(f"{construtor.tipo} construiu uma barricada em ({linha}, {coluna})!")
+        return True
+
+    def _garantir_vao_estatico(self, peca):
+        """
+        Garante que existe um VBO/VAO estático já carregado na GPU para o
+        tipo+cor desta peça. Para peças criadas no __init__ (soldados) isso
+        já foi feito antes; para peças criadas durante o jogo (barricadas),
+        criamos aqui, uma única vez por combinação (tipo, cor).
+        """
+        chave = (peca.tipo, tuple(peca.cor))
+        if chave in self.vaos_modelos:
+            return
+
+        if peca.tipo == "Barricada":
+            dados = preparar_barricada_renderizavel(0.8, peca.cor)
+        else:
+            dados = preparar_modelo_renderizavel(self.modelos[peca.tipo], peca.cor)
+
+        qtd_vertices = len(dados) // 8
+
+        vao = glGenVertexArrays(1)
+        vbo = glGenBuffers(1)
+        glBindVertexArray(vao)
+        glBindBuffer(GL_ARRAY_BUFFER, vbo)
+        glBufferData(GL_ARRAY_BUFFER, dados.nbytes, dados, GL_STATIC_DRAW)
+
+        stride = 8 * 4
+        glEnableVertexAttribArray(0)
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride, ctypes.c_void_p(0))
+        glEnableVertexAttribArray(1)
+        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, stride, ctypes.c_void_p(12))
+        glEnableVertexAttribArray(2)
+        glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, stride, ctypes.c_void_p(24))
+
+        glBindVertexArray(0)
+
+        self.vaos_modelos[chave] = (vao, vbo, qtd_vertices)
+
     def casas_alcancaveis(self, peca):
         casas = []
         for linha in range(8):
@@ -342,6 +405,43 @@ class Tabuleiro:
             if peca.jogador == jogador and (not peca.movido or not peca.atacou):
                 return False
         return True
+
+    def verificar_fim_de_jogo(self):
+        """
+        Verifica as duas condições de vitória:
+        1) Uma peça do time azul alcançou a coluna objetivo (a base) -> azul vence.
+        2) Um dos times perdeu todas as peças -> o outro time vence.
+        Não faz nada se o jogo já tiver terminado.
+        """
+        if self.jogo_terminado:
+            return
+
+        # Condição 1: peça azul chegou na coluna da base
+        for peca in self.pecas:
+            if peca.jogador == self.JOGADOR_AZUL and peca.coluna == self.COLUNA_OBJETIVO:
+                self.jogo_terminado = True
+                self.vencedor = self.JOGADOR_AZUL
+                print("=== FIM DE JOGO: time AZUL alcançou a base e venceu! ===")
+                return
+
+        # Condição 2: time sem peças (obstáculos/barricadas não contam)
+        tem_vermelho = any(
+            p.jogador == self.JOGADOR_VERMELHO and not p.e_obstaculo
+            for p in self.pecas
+        )
+        tem_azul = any(
+            p.jogador == self.JOGADOR_AZUL and not p.e_obstaculo
+            for p in self.pecas
+        )
+
+        if not tem_vermelho:
+            self.jogo_terminado = True
+            self.vencedor = self.JOGADOR_AZUL
+            print("=== FIM DE JOGO: time VERMELHO perdeu todas as peças. AZUL venceu! ===")
+        elif not tem_azul:
+            self.jogo_terminado = True
+            self.vencedor = self.JOGADOR_VERMELHO
+            print("=== FIM DE JOGO: time AZUL perdeu todas as peças. VERMELHO venceu! ===")
 
     def render(self, shaderId, locations, projMatrix, viewMatrix):
         # --------------------------------------------------------------

@@ -263,3 +263,23 @@ def preparar_modelo_renderizavel(vertices_base, cor):
 
     dados = np.hstack((v, cores, uvs))
     return dados.flatten().astype(np.float32)
+
+def preparar_barricada_renderizavel(tamanho, cor):
+    """
+    Monta o buffer (pos+cor+uv) de uma barricada (cubo simples), centrada
+    na origem em X/Z e com a base em y=0 (para encaixar sobre a casa do
+    tabuleiro, já que o modelMatrix vai posicionar/cuidar do resto).
+    Mesmo formato dos outros buffers estáticos: 8 floats por vértice.
+    """
+    largura = tamanho
+    altura = tamanho * 0.6      # mais baixa que larga
+    profundidade = tamanho * 0.35  # mais fina, tipo muro
+
+    vertices_muro = add_paralelepipedo(
+        -largura / 2, 0.0, -profundidade / 2,
+        largura, altura, profundidade,
+        cor
+    )
+    arr = np.array(vertices_muro, dtype=np.float32).reshape(-1, 8)  # já vem com uv!
+
+    return arr.flatten().astype(np.float32)
