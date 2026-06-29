@@ -283,3 +283,21 @@ def preparar_barricada_renderizavel(tamanho, cor):
     arr = np.array(vertices_muro, dtype=np.float32).reshape(-1, 8)  # já vem com uv!
 
     return arr.flatten().astype(np.float32)
+
+def adicionar_modelo(vertices_base, x, y, z, cor):
+    if len(vertices_base) == 0:
+        return []
+
+    vertices = vertices_base.copy()
+
+    vertices[:, 0] += x
+    vertices[:, 1] += y
+    vertices[:, 2] += z
+
+    n = len(vertices)
+    cores = np.tile(np.array(cor, dtype=np.float32), (n, 1))
+    uvs = np.zeros((n, 2), dtype=np.float32)
+
+    dados = np.hstack((vertices, cores, uvs))
+
+    return dados.flatten().tolist()

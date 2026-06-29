@@ -1,7 +1,11 @@
 import numpy as np
 import math
-from geometria import add_tile, add_aura, add_paralelepipedo
+from geometria import add_tile, add_aura, add_paralelepipedo, carregar_modelo_base, adicionar_modelo
 
+MODELO_PILHA = carregar_modelo_base(
+    "modelos/pilha/pilha_otimizado.obj",
+    escala=0.5
+)
 def build_grid():
     SIZE = 1.0
     GRID = 8
@@ -22,13 +26,11 @@ def build_grid():
             color = LIGHT if (row + col) % 2 == 0 else DARK
             data += add_tile(col - offset, row - offset, SIZE, color, h=0.9, ybase=0.0)
 
-    data += add_paralelepipedo(
-        4.0,            # x
-        -0.4,           # y
-        -3,            # z
-        3.0,            # largura
-        0.7,            # altura
-        6.0,            # profundidade
+    data += adicionar_modelo(
+        MODELO_PILHA,
+        5.0,
+        -0.4,
+        -0.5,           # profundidade
         (0.5, 0.5, 0.5) # cor
     )
 
